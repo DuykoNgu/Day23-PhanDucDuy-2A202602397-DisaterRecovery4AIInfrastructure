@@ -1,40 +1,43 @@
-# RTO/RPO Evidence — Lab 23 (TEMPLATE — sinh viên điền bằng SỐ CỦA MÌNH)
+# RTO/RPO evidence — Lab 23
 
-Quy tắc duy nhất: mỗi con số ở đây phải trỏ được về **một dòng log thật**
-(`đường/dẫn.jsonl:số_dòng`). `pytest tests/test_rto_evidence.py` sẽ mở từng file ra kiểm tra.
-Con số không có evidence = trượt, bất kể các phần khác.
+Các mốc dưới đây được đo từ chính lần chạy ngày 11/10/2026 (UTC). Đồng hồ RTO là timestamp của request từ load generator, không phải thời gian in ở terminal.
 
-## 1. Drill 1 — không có DR (baseline)
+## 1. Drill 1 — không có DR
 
-| Chỉ số | Giá trị | Cách đo | Evidence |
-|---|---|---|---|
-| t_outage | `<iso>` | chaos kill | `chaos/chaos-events.jsonl:1` |
-| Request fail đầu tiên | `+__s` | dòng `ok:false` đầu tiên sau t_outage | `reports/drill-1-nodr.jsonl:__` |
-| Request thành công sau đó | không có | không có dòng `ok:true` nào sau t_outage | `reports/measure-drill-1.json` |
-| RTO | `NO_RECOVERY` | `tools/measure_rto.py` | `reports/measure-drill-1.json` |
+| Chỉ số | Đo được | Evidence |
+|---|---:|---|
+| A bị chặn (`netblock`) | 2026-10-11T16:06:35Z | `chaos/chaos-events.jsonl:3` |
+| Request lỗi đầu tiên | +0.0s (timestamp request +0.035s), `ReadTimeout` | `reports/drill-1-nodr.jsonl:17` |
+| Request phục hồi | Không có trong thời gian tải; 16 request lỗi | `reports/drill-1-nodr.jsonl:32`, `reports/measure-drill-1.json` |
+| RTO | **NO_RECOVERY** | `reports/measure-drill-1.json` |
 
 ## 2. Drill 2 — có DR
 
-| Mốc | +giây từ t_outage | Cách đo | Evidence |
-|---|---|---|---|
-| t_outage (mốc 0) | 0 | `action:kill` | `chaos/chaos-events.jsonl:__` |
-| User thấy lỗi đầu tiên | | dòng `ok:false` đầu | `reports/drill-2-withdr.jsonl:__` |
-| Health check phát hiện | | `to:UNHEALTHY, region:a` | `reports/health-events.jsonl:__` |
-| Snapshot restore xong | | `step:2_restore_snapshot` | `reports/failover-events.jsonl:__` |
-| Region phụ ready | | `step:4_wait_ready` | `reports/failover-events.jsonl:__` |
-| DNS cutover | | `step:5_dns_cutover` | `reports/failover-events.jsonl:__` |
-| **RTO đo được** | | dòng `ok:true` đầu sau lỗi | `reports/drill-2-withdr.jsonl:__` |
+| Mốc | Giây từ outage | Evidence |
+|---|---:|---|
+| A bị chặn, mốc 0 (2026-10-11T16:11:00Z) | 0.0s | `chaos/chaos-events.jsonl:7` |
+| User thấy lỗi đầu tiên | +0.1s | `reports/drill-2-withdr.jsonl:25` |
+| Health checker báo A `UNHEALTHY` | +19.1s | `reports/health-events.jsonl:2` |
+| Snapshot đã restore vào B | +21.6s | `reports/failover-events.jsonl:2` |
+| B hoàn tất warm-up và ready | +27.8s | `reports/failover-events.jsonl:4` |
+| DNS/LB pointer cutover sang B | +27.8s | `reports/failover-events.jsonl:5` |
+| Request đầu tiên thành công từ B | **+28.3s** | `reports/drill-2-withdr.jsonl:39` |
 
-| Chỉ số | Đo được | Mục tiêu (slide §1) | Verdict |
-|---|---|---|---|
-| RTO — Inference API | `__s` | 300s (5 phút) | |
-| RPO — Vector DB | `__s` / `__` doc | 300s (5 phút) | |
+| Chỉ số | Đo được | Mục tiêu | Kết luận | Evidence |
+|---|---:|---:|---|---|
+| RTO inference API | **28.3s** | 300s | PASS | `reports/measure-drill-2.json`, `reports/drill-2-withdr.jsonl:39` |
+| RPO vector DB tại lúc restore | **10.03s / 5 documents** | 300s | PASS | `reports/failover-events.jsonl:2`, `reports/replication.jsonl:2` |
 
-## 3. RTO của tôi gồm những gì (bắt buộc — đây là phần chấm điểm hiểu bài)
+`tools/measure_rto.py` xác nhận `valid:true`, `warnings:[]`, region bị kill là A và request phục hồi do B phục vụ (`reports/measure-drill-2.json`).
 
-| Thành phần | Giây | Nó đến từ đâu | Giảm được bằng cách nào |
-|---|---|---|---|
-| Health-check detect floor | | `interval_s × threshold` trong `reports/health-events.jsonl:__` | |
-| Snapshot restore | | 2_restore → 3_scale | |
-| GPU pool warm-up | | `waited_s` ở `4_wait_ready` | |
-| DNS/LB TTL cache | | t_recovered − t_cutover | |
+## 3. Phân rã RTO thực đo
+
+| Thành phần | Giây | Cách tính và evidence | Cách giảm |
+|---|---:|---|---|
+| Health-check detection | 19.1s | Outage → `UNHEALTHY`; cấu hình `interval_s=5`, `threshold=3`, floor 15.0s. `chaos/chaos-events.jsonl:7`, `reports/health-events.jsonl:2` | Giảm interval hoặc timeout, cân nhắc false alarm |
+| Xác nhận của operator và restore snapshot | 2.5s | `UNHEALTHY` → `3_scale_pool`; bản thân `get` mất khoảng 0.005s; phần lớn là probe A bị timeout. `reports/health-events.jsonl:2`, `reports/runbook-run.jsonl:1`, `reports/failover-events.jsonl:2`, `reports/failover-events.jsonl:3` | Dùng trạng thái health checker đã xác nhận để bỏ probe lặp |
+| GPU pool warm-up | 6.2s | `3_scale_pool` → `4_wait_ready` (`waited_s=6.2`). `reports/failover-events.jsonl:3`, `reports/failover-events.jsonl:4` | Giữ capacity warm hoặc dự trữ pool |
+| DNS/LB TTL và lần request kế tiếp | 0.5s | `5_dns_cutover` → request B đầu tiên; TTL cấu hình 5s nhưng cache đã gần hết hạn. `reports/failover-events.jsonl:5`, `reports/drill-2-withdr.jsonl:39` | TTL thấp hơn nếu cần RTO thấp hơn |
+| **Tổng** | **28.3s** | Tổng bốn thành phần làm tròn 1 chữ số, khớp RTO do công cụ đo. `reports/measure-drill-2.json` | |
+
+Snapshot được tạo trước outage bởi replication 30 giây/lần (`reports/replication.jsonl:2`); tại lúc restore, primary có 5 document mới hơn snapshot (`reports/failover-events.jsonl:2`).

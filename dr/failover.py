@@ -22,6 +22,7 @@ Chạy:  python dr/failover.py --target b --backend fs
 import argparse
 import json
 import pathlib
+import sqlite3
 import sys
 import time
 
@@ -34,14 +35,62 @@ URL = {"a": "http://127.0.0.1:8001", "b": "http://127.0.0.1:8002"}
 LOG = pathlib.Path("reports/failover-events.jsonl")
 
 
-def emit(**kw):
-    """TODO: append 1 dòng JSONL có ts + iso vào LOG, và print ra stdout."""
-    raise NotImplementedError
+def emit(**kw: object) -> dict[str, object]:
+    now = time.time()
+    event = {"ts": now, "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)), **kw}
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as log:
+        log.write(json.dumps(event) + "\n")
+    print(json.dumps(event), flush=True)
+    return event
+
+
+def state_of(region: str) -> dict:
+    response = httpx.get(f"{URL[region]}/v1/state", timeout=2)
+    response.raise_for_status()
+    return response.json()
 
 
 def failover(target: str, backend: str, wait: float) -> dict:
-    """TODO: 5 bước ở trên, đúng thứ tự."""
-    raise NotImplementedError
+    if target not in URL or wait <= 0:
+        raise ValueError("invalid target or wait")
+    source = "b" if target == "a" else "a"
+    try:
+        before = state_of(target)
+        emit(step="1_verify_target", target=target, state=before)
+        meta = snapshot.get(target, backend)
+        rpo = snapshot.rpo(pathlib.Path(f"state/region-{source}/vectors.sqlite"),
+                           pathlib.Path(f"state/region-{target}/vectors.sqlite"))
+        emit(step="2_restore_snapshot", target=target, **rpo,
+             embed_model_version=meta["embed_model_version"], snapshot_at=meta["snapshot_at"])
+        pool = pathlib.Path(f"state/region-{target}/pool_state")
+        pool.parent.mkdir(parents=True, exist_ok=True)
+        pool.write_text("full\n")
+        emit(step="3_scale_pool", target=target, pool_state="full")
+        started = time.monotonic()
+        ready = False
+        while time.monotonic() - started < wait:
+            try:
+                ready = httpx.get(f"{URL[target]}/readyz", timeout=2).status_code == 200
+            except httpx.HTTPError:
+                ready = False
+            if ready:
+                break
+            time.sleep(0.5)
+        emit(step="4_wait_ready", target=target, ok=ready,
+             waited_s=round(time.monotonic() - started, 2))
+        if not ready:
+            return {"ok": False, "reason": "target_not_ready", "target": target}
+        restored_state = state_of(target)
+        if not restored_state.get("weights") or restored_state.get("count", 0) < 1:
+            return {"ok": False, "reason": "target_state_invalid", "target": target}
+        pathlib.Path("edge/active_region").write_text(target)
+        emit(step="5_dns_cutover", target=target, ok=True)
+        return {"ok": True, "target": target, "state": restored_state, **rpo,
+                "embed_model_version": meta["embed_model_version"]}
+    except (httpx.HTTPError, OSError, KeyError, ValueError, sqlite3.DatabaseError, SystemExit) as error:
+        emit(step="abort", target=target, reason=str(error))
+        return {"ok": False, "target": target, "reason": str(error)}
 
 
 if __name__ == "__main__":

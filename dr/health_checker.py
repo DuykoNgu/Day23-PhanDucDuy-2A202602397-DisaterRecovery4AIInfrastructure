@@ -29,13 +29,36 @@ URL = {"a": "http://127.0.0.1:8001", "b": "http://127.0.0.1:8002"}
 
 
 def probe(region: str, timeout: float) -> tuple[bool, str]:
-    """TODO: trả về (ready, reason). Timeout PHẢI có — netblock làm request treo mãi."""
-    raise NotImplementedError
+    try:
+        response = httpx.get(f"{URL[region]}/readyz", timeout=timeout)
+        if response.status_code == 200:
+            return True, "ready"
+        return False, ",".join(response.json().get("reasons", [])) or f"HTTP {response.status_code}"
+    except (httpx.HTTPError, ValueError) as error:
+        return False, type(error).__name__
 
 
-def run(interval: float, timeout: float, threshold: int, duration: float, out: pathlib.Path):
-    """TODO: vòng lặp poll + phát hiện transition + ghi JSONL."""
-    raise NotImplementedError
+def run(interval: float, timeout: float, threshold: int, duration: float, out: pathlib.Path) -> None:
+    if interval <= 0 or timeout <= 0 or threshold < 1 or duration < 0:
+        raise ValueError("interval, timeout, threshold must be positive; duration must be nonnegative")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    failures = {region: 0 for region in URL}
+    states = {region: "HEALTHY" for region in URL}
+    deadline = time.monotonic() + duration
+    while time.monotonic() < deadline:
+        for region in URL:
+            ready, reason = probe(region, timeout)
+            failures[region] = 0 if ready else failures[region] + 1
+            new_state = "HEALTHY" if ready else "UNHEALTHY" if failures[region] >= threshold else states[region]
+            if new_state != states[region]:
+                states[region] = new_state
+                event = {"ts": time.time(), "event": "state_change", "region": region,
+                         "to": new_state, "reason": reason, "interval_s": interval,
+                         "threshold": threshold, "consecutive_fails": failures[region]}
+                with out.open("a") as log:
+                    log.write(json.dumps(event) + "\n")
+                print(json.dumps(event), flush=True)
+        time.sleep(min(interval, max(0, deadline - time.monotonic())))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,8 @@
+{"ts": 1791734749.94165, "iso": "2026-10-11T16:05:49", "action": "refused", "region": "a", "mode": "netblock", "reason": "region-b khong phan hoi /healthz -> giet region-a nua la double outage, RTO do duoc se vo nghia"}
+{"ts": 1791734782.921768, "iso": "2026-10-11T16:06:22", "action": "restore", "region": "a", "method": "SIGCONT", "pid": 59921}
+{"ts": 1791734795.0664241, "iso": "2026-10-11T16:06:35", "action": "kill", "region": "a", "mode": "netblock", "backend": "bare", "mock": true, "other_region": "b", "other_alive": true, "forced_both": false, "note": "t_outage_start \u2014 moc 0 cua RTO clock"}
+{"ts": 1791734827.946571, "iso": "2026-10-11T16:07:07", "action": "restore", "region": "a", "method": "SIGCONT", "pid": 59921}
+{"ts": 1791734872.946626, "iso": "2026-10-11T16:07:52", "action": "kill", "region": "a", "mode": "netblock", "backend": "bare", "mock": true, "other_region": "b", "other_alive": true, "forced_both": false, "note": "t_outage_start \u2014 moc 0 cua RTO clock"}
+{"ts": 1791735026.750344, "iso": "2026-10-11T16:10:26", "action": "restore", "region": "a", "method": "SIGCONT", "pid": 59921}
+{"ts": 1791735060.450017, "iso": "2026-10-11T16:11:00", "action": "kill", "region": "a", "mode": "netblock", "backend": "bare", "mock": true, "other_region": "b", "other_alive": true, "forced_both": false, "note": "t_outage_start \u2014 moc 0 cua RTO clock"}
+{"ts": 1791735169.7126951, "iso": "2026-10-11T16:12:49", "action": "restore", "region": "a", "method": "SIGCONT", "pid": 59921}
